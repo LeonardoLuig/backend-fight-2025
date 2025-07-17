@@ -2,27 +2,40 @@
   "name": "backend-fight0-2025",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "start:api": "echo \"Error: no test specified\" && exit 1",
-    "start:worker": "echo \"Error: no test specified\" && exit 1",
-    "start:api:prod": "echo \"Error: no test specified\" && exit 1",
-    "start:worker:prod": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsup",
+    "start:api": "node dist/api/api.js",
+    "start:api:d": "tsx src/api/api.ts",
+    "start:worker": "node src/worker/worker.js",
+    "start:worker:d": "tsx src/worker/worker.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "fastify": "^5.4.0"
+    "@fastify/cors": "^11.0.1",
+    "bullmq": "^5.56.4",
+    "dotenv": "^17.2.0",
+    "fastify": "^5.4.0",
+    "ioredis": "^5.6.1",
+    "mongodb": "^6.17.0",
+    "pg": "^8.16.3",
+    "uuid": "^11.1.0",
+    "zod": "^4.0.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.13",
     "@typescript-eslint/eslint-plugin": "^8.36.0",
     "@typescript-eslint/parser": "^8.36.0",
-    "eslint": "^9.30.1",
+    "eslint": "^9.28.0",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-prettier": "^5.5.1",
-    "eslint-plugin-unused-imports": "^4.1.4"
+    "eslint-plugin-unused-imports": "^4.1.4",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.3",
+    "typescript-eslint": "^8.36.0"
   }
 }

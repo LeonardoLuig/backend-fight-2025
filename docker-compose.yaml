@@ -1,0 +1,72 @@
+services:
+  # mongo:
+  #   image: mongo:6.0-alpine
+  #   container_name: mongo
+  #   restart: always
+  #   networks:
+  #     - mongo-net
+  #   ports:
+  #     - '27017:27017'
+  #   healthcheck:
+  #     test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: redis
+  #   restart: always
+  #   ports:
+  #     - '6379:6379'
+  #   networks:
+  #     - redis-net
+  #   healthcheck:
+  #     test: ['CMD', 'redis-cli', 'ping']
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  api1: &api
+    hostname: api1
+    build: .
+    restart: always
+    environment:
+      - API_PORT=8080
+      - API_HOST=localhost
+      - PAYMENT_PROCESSOR_URL_DEFAULT=http://payment-processor-default:8080
+      - PAYMENT_PROCESSOR_URL_FALLBACK=http://payment-processor-fallback:8080
+    networks:
+      - api-net
+
+  api2:
+    <<: *api
+    hostname: api2
+
+  # worker:
+  #   build: ./Dockerfile.worker
+  #   restart: always
+  #   networks:
+  #     - worker-net
+  #     - payment-processor
+  nginx:
+    image: nginx:alpine
+    container_name: loadbalancer
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - 9999:80
+    networks:
+      - api-net
+    depends_on:
+      - api1
+      - api2
+networks:
+  mongo-net:
+    driver: bridge
+  redis-net:
+    driver: bridge
+  api-net:
+    driver: bridge
+  worker-net:
+    driver: bridge
+  payment-processor:
+    external: true

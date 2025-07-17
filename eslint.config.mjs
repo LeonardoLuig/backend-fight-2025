@@ -1,22 +1,24 @@
 // eslint.config.mjs
+// @ts-check
+
+import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
+
 import prettier from 'eslint-plugin-prettier';
 import importPlugin from 'eslint-plugin-import';
 import unusedImports from 'eslint-plugin-unused-imports';
-import js from '@eslint/js';
 
-export default [
-  js.configs.recommended, // base JS rules
+export default tseslint.config(
+  eslint.configs.recommended, // Regras base do ESLint
+  tseslint.configs.recommendedTypeChecked, // Regras TS com type-checking
+  tseslint.configs.stylisticTypeChecked, // Regras de estilo com type-checking
 
-  ...tseslint.configs.recommendedTypeChecked, // TS rules com type checking
   {
-    files: ['**/*.ts'],
+    files: ['src/**/*.ts'],
     languageOptions: {
-      parser: tseslint.parser,
       parserOptions: {
-        project: './tsconfig.json',
-        sourceType: 'module',
-        ecmaVersion: '2022',
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
       },
     },
     plugins: {
@@ -34,7 +36,7 @@ export default [
           allowTypedFunctionExpressions: true,
         },
       ],
-      '@typescript-eslint/no-unused-vars': ['off', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/explicit-module-boundary-types': 'warn',
 
       // JS
@@ -48,7 +50,7 @@ export default [
           groups: ['builtin', 'external', 'internal', ['parent', 'sibling', 'index']],
           pathGroups: [
             {
-              pattern: '@src/**',
+              pattern: '@/**',
               group: 'internal',
             },
           ],
@@ -78,4 +80,13 @@ export default [
       'unused-imports/no-unused-imports': 'warn',
     },
   },
-];
+
+  {
+    files: ['**/*.js', '**/*.mjs'],
+    extends: [tseslint.configs.disableTypeChecked], // Desliga regras que exigem TS
+  },
+
+  {
+    ignores: ['dist/**', 'node_modules/**'], // Exclusões (substitui .eslintignore)
+  },
+);
