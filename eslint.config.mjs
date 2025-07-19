@@ -1,92 +1,31 @@
-// eslint.config.mjs
-// @ts-check
+import js from '@eslint/js';
+import node from 'eslint-plugin-n';
+import globals from 'globals';
 
-import eslint from '@eslint/js';
-import tseslint from 'typescript-eslint';
-
-import prettier from 'eslint-plugin-prettier';
-import importPlugin from 'eslint-plugin-import';
-import unusedImports from 'eslint-plugin-unused-imports';
-
-export default tseslint.config(
-  eslint.configs.recommended, // Regras base do ESLint
-  tseslint.configs.recommendedTypeChecked, // Regras TS com type-checking
-  tseslint.configs.stylisticTypeChecked, // Regras de estilo com type-checking
+export default [
+  js.configs.recommended,
 
   {
-    files: ['src/**/*.ts'],
+    files: ['**/*.mjs'],
     languageOptions: {
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
       },
     },
     plugins: {
-      import: importPlugin,
-      'unused-imports': unusedImports,
-      prettier,
+      n: node,
     },
     rules: {
-      // TypeScript
-      '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/explicit-function-return-type': [
-        'warn',
-        {
-          allowExpressions: true,
-          allowTypedFunctionExpressions: true,
-        },
-      ],
-      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
-      '@typescript-eslint/explicit-module-boundary-types': 'warn',
-
-      // JS
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
-      'no-debugger': 'warn',
-
-      // Import organização
-      'import/order': [
-        'warn',
-        {
-          groups: ['builtin', 'external', 'internal', ['parent', 'sibling', 'index']],
-          pathGroups: [
-            {
-              pattern: '@/**',
-              group: 'internal',
-            },
-          ],
-          pathGroupsExcludedImportTypes: ['builtin'],
-          'newlines-between': 'always',
-          alphabetize: {
-            order: 'asc',
-            caseInsensitive: true,
-          },
-        },
-      ],
-
-      // Prettier
-      'prettier/prettier': [
-        'warn',
-        {
-          semi: true,
-          singleQuote: true,
-          trailingComma: 'all',
-          printWidth: 100,
-          tabWidth: 2,
-          endOfLine: 'auto',
-        },
-      ],
-
-      // Unused imports
-      'unused-imports/no-unused-imports': 'warn',
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      'no-console': 'off',
+      'no-undef': 'error',
+      'no-var': 'error',
+      'prefer-const': 'warn',
+      eqeqeq: ['error', 'always'],
+      'n/no-missing-import': 'error',
+      'n/no-unsupported-features/es-syntax': 'off',
     },
   },
-
-  {
-    files: ['**/*.js', '**/*.mjs'],
-    extends: [tseslint.configs.disableTypeChecked], // Desliga regras que exigem TS
-  },
-
-  {
-    ignores: ['dist/**', 'node_modules/**'], // Exclusões (substitui .eslintignore)
-  },
-);
+];

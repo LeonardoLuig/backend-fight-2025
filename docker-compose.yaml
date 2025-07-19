@@ -1,52 +1,85 @@
 services:
-  # mongo:
-  #   image: mongo:6.0-alpine
-  #   container_name: mongo
-  #   restart: always
-  #   networks:
-  #     - mongo-net
-  #   ports:
-  #     - '27017:27017'
-  #   healthcheck:
-  #     test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: redis
-  #   restart: always
-  #   ports:
-  #     - '6379:6379'
-  #   networks:
-  #     - redis-net
-  #   healthcheck:
-  #     test: ['CMD', 'redis-cli', 'ping']
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
-  api1: &api
-    hostname: api1
-    build: .
+  mongo:
+    image: mongo
+    container_name: mongo
+    restart: always
+    networks:
+      - mongo-net
+    ports:
+      - '27017:27017'
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: '90MB'
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    ports:
+      - '6379:6379'
+    networks:
+      - server-net
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: '25MB'
+  server1: &server
+    build:
+      context: .
+      dockerfile: ./server/Dockerfile
     restart: always
     environment:
-      - API_PORT=8080
-      - API_HOST=localhost
+      - SERVER_PORT=8080
+      - SERVER_HOST=0.0.0.0
+      - REDIS_URL=redis://redis:6379
       - PAYMENT_PROCESSOR_URL_DEFAULT=http://payment-processor-default:8080
       - PAYMENT_PROCESSOR_URL_FALLBACK=http://payment-processor-fallback:8080
     networks:
-      - api-net
-
-  api2:
-    <<: *api
-    hostname: api2
-
-  # worker:
-  #   build: ./Dockerfile.worker
-  #   restart: always
-  #   networks:
-  #     - worker-net
-  #     - payment-processor
+      - server-net
+      - mongo-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.45'
+          memory: '90MB'
+    depends_on:
+      - redis
+      - mongo
+  server2:
+    <<: *server
+  worker:
+    build:
+      context: .
+      dockerfile: ./worker/Dockerfile
+    restart: always
+    environment:
+      - REDIS_URL=redis://redis:6379
+    networks:
+      - server-net
+      - mongo-net
+      - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: '40MB'
+    depends_on:
+      - redis
+      - mongo
+      - server1
+      - server2
   nginx:
     image: nginx:alpine
     container_name: loadbalancer
@@ -55,18 +88,19 @@ services:
     ports:
       - 9999:80
     networks:
-      - api-net
+      - server-net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: '15MB'
     depends_on:
-      - api1
-      - api2
+      - server1
+      - server2
 networks:
+  server-net:
+    driver: bridge
   mongo-net:
-    driver: bridge
-  redis-net:
-    driver: bridge
-  api-net:
-    driver: bridge
-  worker-net:
     driver: bridge
   payment-processor:
     external: true
