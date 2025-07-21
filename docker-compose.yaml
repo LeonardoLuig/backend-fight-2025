@@ -4,7 +4,7 @@ services:
     container_name: mongo
     restart: always
     networks:
-      - mongo-net
+      - server-net
     ports:
       - '27017:27017'
     healthcheck:
@@ -38,7 +38,7 @@ services:
   server1: &server
     build:
       context: .
-      dockerfile: ./server/Dockerfile
+      dockerfile: ./src/server/Dockerfile
     restart: always
     environment:
       - SERVER_PORT=8080
@@ -49,7 +49,6 @@ services:
       - PAYMENT_PROCESSOR_URL_FALLBACK=http://payment-processor-fallback:8080
     networks:
       - server-net
-      - mongo-net
     deploy:
       resources:
         limits:
@@ -63,14 +62,13 @@ services:
   worker:
     build:
       context: .
-      dockerfile: ./worker/Dockerfile
+      dockerfile: ./src/worker/Dockerfile
     restart: always
     environment:
       - REDIS_URL=redis://redis:6379
       - MONGO_URL=mongodb://mongo:27017
     networks:
       - server-net
-      - mongo-net
       - payment-processor
     deploy:
       resources:
@@ -101,8 +99,6 @@ services:
       - server2
 networks:
   server-net:
-    driver: bridge
-  mongo-net:
     driver: bridge
   payment-processor:
     external: true

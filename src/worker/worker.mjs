@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 import { Writable } from 'node:stream';
 import { createClient } from 'redis';
+import { getFromPaymentProcessingQueue } from '../shared.mjs';
 
 const redis = createClient({ url: process.env.REDIS_URL });
 await redis.connect();
@@ -23,7 +24,7 @@ const paymentProcessor = new Writable({
 
 async function worker() {
   while (true) {
-    const task = await redis.LPOP('paymentProcessorQueue');
+    const task = await getFromPaymentProcessingQueue();
     if (task) {
       paymentProcessor.write(task);
     }

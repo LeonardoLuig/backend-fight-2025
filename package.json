@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start:server": "node server/src/main.mjs",
-    "start:worker": "node worker/worker.mjs",
+    "start:server": "node src/server/server.mjs",
+    "start:worker": "node src/worker/worker.mjs",
     "dc-up": "docker compose down -v && docker compose up -d"
   },
   "devDependencies": {
