@@ -1,143 +1,155 @@
-import { MongoClient } from 'mongodb';
+/* eslint-disable no-unused-vars */
+/* eslint-disable eqeqeq */
 import { createClient } from 'redis';
 
-// --------------------------------------> Enums
+const redisClient = createClient({ url: process.env.REDIS_URL });
+await redisClient.connect();
+
 export const PaymentProcessorEnum = Object.freeze({
   DEFAULT: 'default',
   FALLBACK: 'fallback',
 });
 
-export const paymentProcessorServiceEnum = {
+export const paymentProcessorServiceEnum = Object.freeze({
   [PaymentProcessorEnum.DEFAULT]: process.env.PAYMENT_PROCESSOR_URL_DEFAULT,
   [PaymentProcessorEnum.FALLBACK]: process.env.PAYMENT_PROCESSOR_URL_FALLBACK,
-};
-
-// --------------------------------------> Mongo
-const mongoClient = new MongoClient(process.env.MONGO_URL);
-await mongoClient.connect();
-
-const paymentCollection = mongoClient.db('backend-fight-2025').collection('payments');
+});
 
 export async function addPayment(payment) {
-  try {
-    await paymentCollection.insertOne({
-      processor: payment.processor || PaymentProcessorEnum.DEFAULT,
+  return await redisClient.zAdd(`payments:${payment.processor}`, {
+    score: +payment.requestedAt,
+    value: JSON.stringify({
       correlationId: payment.correlationId,
       amount: payment.amount,
-      createdAt: new Date(),
-    });
-
-    return true;
-  } catch (err) {
-    console.error(`[addPayment] error: ${err}`);
-    await addToPaymentProcessingQueue(payment);
-
-    return false;
-  }
+    }),
+  });
 }
 
 export async function findPaymentsSummary(by = {}) {
-  const $match = {};
+  const defaultKey = `payments:${PaymentProcessorEnum.DEFAULT}`;
+  const fallbackKey = `payments:${PaymentProcessorEnum.FALLBACK}`;
 
-  const createdAtMatch = {};
-  if (by.from) createdAtMatch.$gte = new Date(by.from);
-  if (by.to) createdAtMatch.$lt = new Date(by.to);
+  let paymentsDefault = [];
+  let paymentsFallback = [];
 
-  if (Object.keys(createdAtMatch).length) {
-    $match.createdAt = createdAtMatch;
+  if (by.from || by.to) {
+    const defaultRange = await redisClient.zRangeByScore(defaultKey, by.from ?? '-inf', by.to ?? '+inf');
+    const fallbackRange = await redisClient.zRangeByScore(fallbackKey, by.from ?? '-inf', by.to ?? '+inf');
+
+    paymentsDefault = defaultRange.map(JSON.parse);
+    paymentsFallback = fallbackRange.map(JSON.parse);
+  } else {
+    const defaultRange = await redisClient.zRange(defaultKey, 0, -1);
+    const fallbackRange = await redisClient.zRange(fallbackKey, 0, -1);
+
+    paymentsDefault = defaultRange.map(JSON.parse);
+    paymentsFallback = fallbackRange.map(JSON.parse);
   }
 
-  const result = await paymentCollection
-    .aggregate([
-      {
-        $match: $match,
-      },
-      {
-        $group: {
-          _id: '$processor',
-          totalRequests: { $sum: 1 },
-          totalAmount: { $sum: '$amount' },
-        },
-      },
-      {
-        $project: {
-          _id: 0,
-          key: '$_id',
-          totalRequests: 1,
-          totalAmount: 1,
-        },
-      },
-    ])
-    .toArray();
-
-  return result.reduce((acc, item) => {
-    acc[item.key] = {
-      totalRequests: item.totalRequests,
-      totalAmount: item.totalAmount,
-    };
-    return acc;
-  }, {});
+  return {
+    default: {
+      totalRequests: paymentsDefault.length,
+      totalAmount: paymentsDefault.reduce((acc, val) => acc + parseFloat(val.amount), 0),
+    },
+    fallback: {
+      totalRequests: paymentsFallback.length,
+      totalAmount: paymentsFallback.reduce((acc, val) => acc + parseFloat(val.amount), 0),
+    },
+  };
 }
 
-// --------------------------------------> Redis
-const redisClient = createClient({ url: process.env.REDIS_URL });
-await redisClient.connect();
+const queue = 'paymentProcessingQueue';
 
-export async function addToPaymentProcessingQueue(payment, stage = 0) {
+export async function addToPaymentProcessingQueue(payment, retryCount = 1) {
   const payload = JSON.stringify({
-    data: payment,
-    stage: stage,
-    retryCount: 0,
+    ...payment,
+    retryCount,
   });
 
-  await redisClient.LPUSH('paymentProcessingQueue', payload);
+  if (retryCount <= 5) {
+    await redisClient.LPUSH(queue, payload);
+  }
 }
 
 export async function getFromPaymentProcessingQueue() {
-  return await redisClient.LPOP('paymentProcessingQueue');
+  return redisClient.LPOP(queue);
 }
 
-// --------------------------------------> External Payment Processor
-export async function getAvailablePaymentProcessor() {
-  const paymentProcessorHandler = async (processor = PaymentProcessorEnum.DEFAULT) => {
-    const cacheKey = `processor:${processor}`;
-    let isAvailable = await redisClient.get(cacheKey);
+const cacheKey = 'processor-service';
 
-    if (isAvailable === 'true') {
-      return processor;
-    } else if (isAvailable === null) {
-      isAvailable = await fetch(`${paymentProcessorServiceEnum[processor]}/health-server`)
-        .then((res) => res.json())
-        .then((json) => json.failing)
-        .catch(() => false);
+export async function addToProcessorServiceCache(paymentProcessor, value) {
+  const key = `${cacheKey}:${paymentProcessor}`;
+  await redisClient.set(key, `${value}`, { expiration: { type: 'EX', value: 10 } });
+}
 
-      await redisClient.set(cacheKey, isAvailable, { expiration: { type: 'EX', value: '5' } });
+export async function getFromProcessorServiceCache(paymentProcessor) {
+  const key = `${cacheKey}:${paymentProcessor}`;
+  const value = await redisClient.get(key);
 
-      if (isAvailable) {
-        return processor;
-      }
-    }
-
+  if (value === null) {
     return null;
-  };
-
-  let processor = await paymentProcessorHandler(PaymentProcessorEnum.DEFAULT);
-  if (!processor) {
-    processor = await paymentProcessorHandler(PaymentProcessorEnum.FALLBACK);
   }
 
-  return processor;
+  return value === 'true';
 }
 
-export async function sendToPaymentProcessor(payment) {
+export async function verifyProcessorServiceAvailability(paymentProcessor) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 100);
+
+  let available = await getFromProcessorServiceCache(paymentProcessor);
+  if (available == null) {
+    try {
+      const processorService = paymentProcessorServiceEnum[paymentProcessor];
+
+      const response = await fetch(`${processorService}/payments/service-health`, {
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(response.statusText);
+      }
+
+      const json = await response.json();
+
+      available = !json.failing;
+      clearTimeout(timeout);
+    } catch (_) {
+      available = false;
+      clearTimeout(timeout);
+    }
+  }
+
+  await addToProcessorServiceCache(paymentProcessor, available);
+  return available;
+}
+
+export async function sendToPaymentProcessor(payment, processorsAvaiability, timeoutInMS = 100) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutInMS);
+
+  let processor = PaymentProcessorEnum.DEFAULT;
+  if (!processorsAvaiability.default) {
+    processor = PaymentProcessorEnum.FALLBACK;
+  }
+
   try {
-    const processor = await getAvailablePaymentProcessor();
-    await fetch(`${paymentProcessorServiceEnum[processor]}/payment`, {
+    const processorService = paymentProcessorServiceEnum[processor];
+    const response = await fetch(`${processorService}/payments`, {
+      signal: controller.signal,
       method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(payment),
     });
-  } catch (err) {
-    console.log(err);
-    addToPaymentProcessingQueue(payment, 1);
+
+    if (!response.ok) {
+      throw new Error(response.statusText);
+    }
+
+    clearTimeout(timeout);
+    return processor;
+  } catch (_) {
+    clearTimeout(timeout);
   }
 }

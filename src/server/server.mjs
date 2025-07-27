@@ -1,18 +1,24 @@
 import { createServer } from 'node:http';
+import { parse as parseUrl } from 'node:url';
+import { parse as parseQuery } from 'node:querystring';
 
-import { addPayment, addToPaymentProcessingQueue, findPaymentsSummary, sendToPaymentProcessor } from '../shared.mjs';
+const { addPayment, addToPaymentProcessingQueue, sendToPaymentProcessor, findPaymentsSummary, verifyProcessorServiceAvailability, PaymentProcessorEnum } = await import(
+  '../shared.mjs'
+);
 
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
 
     req.on('data', (chunk) => {
-      body += chunk;
+      if (chunk) {
+        body += chunk;
+      }
     });
 
     req.on('end', () => {
       try {
-        const json = JSON.parse(body);
+        const json = body ? JSON.parse(body) : {};
         resolve(json);
       } catch (e) {
         reject(e);
@@ -30,36 +36,57 @@ function getHealthCheckHandler(request, response) {
   response.end(JSON.stringify({ message: `server is running` }));
 }
 
-async function postPaymentHandler(request, response) {
-  const body = request.body;
+async function postPaymentsHandler(request) {
+  const body = await parseBody(request);
 
-  if (body) {
-    const isDone = await addPayment(body);
-    // if (isDone) {
-    //   await sendToPaymentProcessor(body);
-    // } else {
-    //   await addToPaymentProcessingQueue(body);
-    // }
+  const payment = {
+    correlationId: body.correlationId,
+    amount: body.amount,
+    requestedAt: new Date(),
+  };
+
+  try {
+    const processorsAvaiability = {
+      default: false,
+      fallback: false,
+    };
+
+    processorsAvaiability.default = await verifyProcessorServiceAvailability(PaymentProcessorEnum.DEFAULT);
+    if (!processorsAvaiability.default) {
+      processorsAvaiability.fallback = await verifyProcessorServiceAvailability(PaymentProcessorEnum.FALLBACK);
+      if (!processorsAvaiability.fallback) {
+        throw new Error('No Payment processors available, adding to queue');
+      }
+    }
+
+    if (body) {
+      const processor = await sendToPaymentProcessor(payment, processorsAvaiability);
+      if (!processor) {
+        throw new Error('Error on send paymento to processor, adding to queue');
+      }
+
+      await addPayment({
+        ...payment,
+        processor: processor,
+      });
+    }
+    // eslint-disable-next-line no-unused-vars
+  } catch (_) {
+    await addToPaymentProcessingQueue(payment);
   }
-
-  response.writeHead(202, { 'Content-Type': 'application/json' });
-  response.end();
 }
 
-async function getPaymentsSummaryHandler(request, response) {
+async function getPaymentsSummaryHandler(request) {
   const query = request.query || {};
 
-  const paymentsSummary = await findPaymentsSummary({
-    from: query.from,
-    to: query.to,
-  });
+  const from = query.from ? new Date(query.from).getTime() : null;
+  const to = query.from ? new Date(query.to).getTime() : null;
 
-  response.writeHead(200, { 'Content-Type': 'application/json' });
-  response.end(JSON.stringify(paymentsSummary));
+  return await findPaymentsSummary({ from, to });
 }
 
 function notFound(response) {
-  response.writeHead(404);
+  response.writeHead(404, { 'Content-Type': 'text/plain' });
   response.end('Not found');
 }
 
@@ -69,21 +96,22 @@ function notAllowed(response) {
 }
 
 const routeHandlers = new Map();
-routeHandlers.set('POST:/payment', postPaymentHandler);
+routeHandlers.set('POST:/payments', postPaymentsHandler);
 routeHandlers.set('GET:/payments-summary', getPaymentsSummaryHandler);
 routeHandlers.set('GET:/health-check', getHealthCheckHandler);
 
 const server = createServer(async (request, response) => {
-  const url = new URL(request.url, `http://${request.headers.host}`);
+  const url = parseUrl(request.url);
   const key = `${request.method}:${url.pathname}`;
   const handler = routeHandlers.get(key);
 
-  if (request.method === 'POST') {
-    request.body = await parseBody(request);
-  }
+  request.query = parseQuery(url.query);
 
   if (handler) {
-    await handler(request, response);
+    const data = await handler(request);
+
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(data));
   } else {
     const urlExists = [...routeHandlers.keys()].some((k) => k.endsWith(`:${request.url}`));
     return urlExists ? notAllowed(response) : notFound(response);
